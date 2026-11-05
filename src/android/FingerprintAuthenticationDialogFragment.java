@@ -62,6 +62,18 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Android saves this fragment with the activity and rebuilds it by itself when the activity
+        // comes back after its process was killed. FingerprintAuth has not run in the new process
+        // at that point (no package name, no callback, no cipher), and the page that asked for the
+        // dialog is gone. Only FingerprintAuth sets a crypto object, so without one nobody is
+        // waiting for a result: remove the fragment instead of showing the dialog.
+        if (mCryptoObject == null) {
+            Log.i(TAG, "Removing the dialog restored from saved state");
+            setShowsDialog(false);
+            dismissAllowingStateLoss();
+            return;
+        }
+
         // Do not create a new Fragment when the Activity is re-created such as orientation changes.
         setRetainInstance(true);
         setStyle(DialogFragment.STYLE_NO_TITLE, android.R.style.Theme_Material_Light_Dialog);
@@ -75,6 +87,12 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
                              Bundle savedInstanceState) {
+        // Restored instance: onCreate queued its removal, which can run after this call on older
+        // Android versions.
+        if (mCryptoObject == null) {
+            return null;
+        }
+
         Bundle args = getArguments();
         Log.d(TAG, "disableBackup: " + FingerprintAuth.mDisableBackup);
 
@@ -160,7 +178,7 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
     @Override
     public void onResume() {
         super.onResume();
-        if (mStage == Stage.FINGERPRINT) {
+        if (mStage == Stage.FINGERPRINT && mFingerprintUiHelper != null) {
             mFingerprintUiHelper.startListening(mCryptoObject);
         }
     }
@@ -172,7 +190,9 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
     @Override
     public void onPause() {
         super.onPause();
-        mFingerprintUiHelper.stopListening();
+        if (mFingerprintUiHelper != null) {
+            mFingerprintUiHelper.stopListening();
+        }
     }
 
     /**
