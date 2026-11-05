@@ -336,6 +336,11 @@ public class FingerprintAuth extends CordovaPlugin {
                             if (isFingerprintAuthAvailable()) {
                                 cordova.getActivity().runOnUiThread(new Runnable() {
                                     public void run() {
+                                        // A dialog of an earlier request can still be up. There is one cipher and
+                                        // one callback, and they belong to this request now.
+                                        if (mFragment != null) {
+                                            mFragment.abandon();
+                                        }
                                         // Set up the crypto object for later. The object will be authenticated by use
                                         // of the fingerprint.
                                         mFragment = new FingerprintAuthenticationDialogFragment();
@@ -674,6 +679,11 @@ public class FingerprintAuth extends CordovaPlugin {
             errorMessage = PluginError.JSON_EXCEPTION.name();
         } catch (UnsupportedEncodingException e) {
             e.printStackTrace();
+        } catch (IllegalStateException e) {
+            // Thrown by a cipher that has no operation left, such as a second doFinal after init.
+            Log.e(TAG, "Failed to encrypt the data with the generated key: "
+                    + "IllegalStateException: " + e.toString());
+            errorMessage = PluginError.INIT_CIPHER_FAILED.name();
         }
 
         if (createdResultJson) {

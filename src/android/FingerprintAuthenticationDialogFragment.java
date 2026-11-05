@@ -49,6 +49,9 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
     private View mFingerprintContent;
 
     private Stage mStage = Stage.FINGERPRINT;
+    // Set by the first answer to the request. The delayed callbacks of FingerprintUiHelper can still
+    // fire after that, when the cipher and callback in FingerprintAuth belong to the next dialog.
+    private boolean mAnswered = false;
 
     private KeyguardManager mKeyguardManager;
     private FingerprintManager.CryptoObject mCryptoObject;
@@ -68,7 +71,7 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
         // dialog is gone. Only FingerprintAuth sets a crypto object, so without one nobody is
         // waiting for a result: remove the fragment instead of showing the dialog.
         if (mCryptoObject == null) {
-            Log.i(TAG, "Removing the dialog restored from saved state");
+            Log.i(TAG, "Removing a dialog nobody is waiting for");
             setShowsDialog(false);
             dismissAllowingStateLoss();
             return;
@@ -132,8 +135,10 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
         mCancelButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                FingerprintAuth.onCancelled();
-                dismissAllowingStateLoss();
+                if (firstAnswer()) {
+                    FingerprintAuth.onCancelled();
+                    dismissAllowingStateLoss();
+                }
             }
         });
 
@@ -178,7 +183,7 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
     @Override
     public void onResume() {
         super.onResume();
-        if (mStage == Stage.FINGERPRINT && mFingerprintUiHelper != null) {
+        if (mStage == Stage.FINGERPRINT && mFingerprintUiHelper != null && !mAnswered) {
             mFingerprintUiHelper.startListening(mCryptoObject);
         }
     }
@@ -200,6 +205,27 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
      */
     public void setCryptoObject(FingerprintManager.CryptoObject cryptoObject) {
         mCryptoObject = cryptoObject;
+    }
+
+    /**
+     * Drops this dialog because a newer request replaces it. If its add is still queued, onCreate
+     * finds no crypto object and removes it.
+     */
+    void abandon() {
+        mAnswered = true;
+        mCryptoObject = null;
+        if (isAdded()) {
+            dismissAllowingStateLoss();
+        }
+    }
+
+    /**
+     * @return {@code true} for the first answer to the request, {@code false} for any later one.
+     */
+    private boolean firstAnswer() {
+        boolean first = !mAnswered;
+        mAnswered = true;
+        return first;
     }
 
     /**
@@ -259,7 +285,7 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
 
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_CODE_CONFIRM_DEVICE_CREDENTIALS) {
+        if (requestCode == REQUEST_CODE_CONFIRM_DEVICE_CREDENTIALS && firstAnswer()) {
             // Challenge completed, proceed with using cipher
             if (resultCode == getActivity().RESULT_OK) {
                 FingerprintAuth.onAuthenticated(false /* used backup */, null);
@@ -274,6 +300,9 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
 
     @Override
     public void onAuthenticated(FingerprintManager.AuthenticationResult result) {
+        if (!firstAnswer()) {
+            return;
+        }
         // Callback from FingerprintUiHelper. Let the activity know that authentication was
         // successful.
         FingerprintAuth.onAuthenticated(true /* withFingerprint */, result);
@@ -282,11 +311,15 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
 
     @Override
     public void onError(CharSequence errString) {
+        if (mAnswered) {
+            return;
+        }
         if (!FingerprintAuth.mDisableBackup) {
             if (getActivity() != null && isAdded()) {
                 goToBackup();
             }
         } else {
+            mAnswered = true;
             FingerprintAuth.onError(errString);
             dismissAllowingStateLoss();
 
@@ -296,7 +329,9 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
     @Override
     public void onCancel(DialogInterface dialog) {
         super.onCancel(dialog);
-        FingerprintAuth.onCancelled();
+        if (firstAnswer()) {
+            FingerprintAuth.onCancelled();
+        }
     }
 
     /**

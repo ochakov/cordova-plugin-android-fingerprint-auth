@@ -40,7 +40,9 @@ public class FingerprintUiHelper extends FingerprintManager.AuthenticationCallba
     private final Callback mCallback;
     private CancellationSignal mCancellationSignal;
     private int mAttempts = 0;
-    private static FingerprintManager.AuthenticationResult fingerprintResult;
+    // Set by the first success. Its result is delivered SUCCESS_DELAY_MILLIS later and the cipher in
+    // it takes one doFinal, so a second success must not be listened for or delivered.
+    private boolean mAuthenticated = false;
 
     boolean mSelfCancelled;
 
@@ -82,7 +84,9 @@ public class FingerprintUiHelper extends FingerprintManager.AuthenticationCallba
     }
 
     public void startListening(FingerprintManager.CryptoObject cryptoObject) {
-        if (!isFingerprintAuthAvailable()) {
+        // The dialog calls this from onResume, also when the activity was paused and resumed while
+        // the success message is on screen.
+        if (mAuthenticated || !isFingerprintAuthAvailable()) {
             return;
         }
         mCancellationSignal = new CancellationSignal();
@@ -147,8 +151,11 @@ public class FingerprintUiHelper extends FingerprintManager.AuthenticationCallba
     }
 
     @Override
-    public void onAuthenticationSucceeded(FingerprintManager.AuthenticationResult result) {
-        fingerprintResult = result;
+    public void onAuthenticationSucceeded(final FingerprintManager.AuthenticationResult result) {
+        if (mAuthenticated) {
+            return;
+        }
+        mAuthenticated = true;
         mErrorTextView.removeCallbacks(mResetErrorTextRunnable);
         int ic_fingerprint_success_id = mContext.getResources()
                 .getIdentifier("ic_fingerprint_success", "drawable", FingerprintAuth.packageName);
@@ -164,7 +171,7 @@ public class FingerprintUiHelper extends FingerprintManager.AuthenticationCallba
         mIcon.postDelayed(new Runnable() {
             @Override
             public void run() {
-                mCallback.onAuthenticated(fingerprintResult);
+                mCallback.onAuthenticated(result);
             }
         }, SUCCESS_DELAY_MILLIS);
     }
